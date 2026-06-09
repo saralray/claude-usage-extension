@@ -25,6 +25,8 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._cancellable = new Gio.Cancellable();
         this._fiveHourNotified = false;
         this._sevenDayNotified = false;
+        this._hasData = false;
+        this._retryTimerId = null;
 
         this._box = new St.BoxLayout({
             style_class: 'panel-status-menu-box',
@@ -112,7 +114,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     }
 
     _createSession() {
-        const session = new Soup.Session();
+        const session = new Soup.Session({timeout: 15});
         const proxyUrl = this._settings.get_string('proxy-url');
 
         if (proxyUrl && proxyUrl.trim() !== '') {
@@ -285,18 +287,14 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 const token = json.claudeAiOauth?.accessToken;
 
                 if (!token) {
-                    this._label.set_text('No token');
-                    this._fiveHourPercent.set_text('No credentials');
-                    this._sevenDayPercent.set_text('—');
+                    this._onCredentialsError();
                     return;
                 }
 
                 this._fetchUsage(token);
             } catch (e) {
                 console.error('Claude Usage: Failed to read credentials:', e.message);
-                this._label.set_text('No token');
-                this._fiveHourPercent.set_text('No credentials');
-                this._sevenDayPercent.set_text('—');
+                this._onCredentialsError();
             }
         });
     }
@@ -317,8 +315,8 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                     const bytes = session.send_and_read_finish(result);
 
                     if (message.status_code !== 200) {
-                        this._label.set_text('Error');
-                        this._fiveHourPercent.set_text(`HTTP ${message.status_code}`);
+                        console.error(`Claude Usage: API returned HTTP ${message.status_code}`);
+                        this._onFetchError(`HTTP ${message.status_code}`);
                         return;
                     }
 
@@ -328,13 +326,58 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                     this._updateDisplay(data);
                 } catch (e) {
                     console.error('Claude Usage: Failed to fetch usage:', e.message);
-                    this._label.set_text('Error');
+                    this._onFetchError('Error');
                 }
             }
         );
     }
 
+    _onCredentialsError() {
+        this._scheduleRetry();
+
+        if (this._hasData)
+            return;
+
+        this._label.set_text('No token');
+        this._fiveHourPercent.set_text('No credentials');
+        this._sevenDayPercent.set_text('—');
+    }
+
+    _onFetchError(detail) {
+        this._scheduleRetry();
+
+        if (this._hasData)
+            return;
+
+        this._label.set_text('Error');
+        this._fiveHourPercent.set_text(detail);
+    }
+
+    _scheduleRetry() {
+        if (this._retryTimerId)
+            return;
+        this._retryTimerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            30,
+            () => {
+                this._retryTimerId = null;
+                this._refreshUsage();
+                return GLib.SOURCE_REMOVE;
+            }
+        );
+    }
+
+    _clearRetry() {
+        if (this._retryTimerId) {
+            GLib.source_remove(this._retryTimerId);
+            this._retryTimerId = null;
+        }
+    }
+
     _updateDisplay(data) {
+        this._hasData = true;
+        this._clearRetry();
+
         const fiveHour = data.five_hour?.utilization ?? 0;
         const sevenDay = data.seven_day?.utilization ?? 0;
 
@@ -468,6 +511,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
     destroy() {
         this._stopTimer();
+        this._clearRetry();
         this._cancellable.cancel();
         if (this._session) {
             this._session.abort();
