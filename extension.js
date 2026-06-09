@@ -22,6 +22,9 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._settings = settings;
         this._openPreferences = openPreferences;
         this._session = this._createSession();
+        this._cancellable = new Gio.Cancellable();
+        this._fiveHourNotified = false;
+        this._sevenDayNotified = false;
 
         this._box = new St.BoxLayout({
             style_class: 'panel-status-menu-box',
@@ -72,6 +75,9 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 this._recreateSession();
             } else if (key === 'icon-style') {
                 this._updateIconStyle();
+            } else if (key === 'discord-webhook-url' || key === 'discord-threshold') {
+                this._fiveHourNotified = false;
+                this._sevenDayNotified = false;
             }
         });
 
@@ -123,7 +129,8 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         }
         this._session = this._createSession();
         this._refreshUsage();
-	}
+    }
+
     _updateIconStyle() {
         const style = this._settings.get_string('icon-style');
         const desatName = 'monochrome-desaturate';
@@ -268,7 +275,9 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         ]);
 
         const file = Gio.File.new_for_path(credentialsPath);
-        file.load_contents_async(null, (file, result) => {
+        file.load_contents_async(this._cancellable, (file, result) => {
+            if (this._cancellable.is_cancelled())
+                return;
             try {
                 const [, contents] = file.load_contents_finish(result);
                 const decoder = new TextDecoder('utf-8');
@@ -300,8 +309,10 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._session.send_and_read_async(
             message,
             GLib.PRIORITY_DEFAULT,
-            null,
+            this._cancellable,
             (session, result) => {
+                if (this._cancellable.is_cancelled())
+                    return;
                 try {
                     const bytes = session.send_and_read_finish(result);
 
@@ -329,13 +340,15 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
         this._label.set_text(`${Math.round(fiveHour)}%`);
 
-        this._updatePanelProgressBar(fiveHour);
+        this._updateProgressBar(this._panelProgressBar, fiveHour, 50);
 
         this._fiveHourPercent.set_text(`${fiveHour.toFixed(1)}%`);
         this._updateProgressBar(this._fiveHourProgressBar, fiveHour);
 
         this._sevenDayPercent.set_text(`${sevenDay.toFixed(1)}%`);
         this._updateProgressBar(this._sevenDayProgressBar, sevenDay);
+
+        this._maybeNotifyDiscord(fiveHour, sevenDay);
 
         if (data.five_hour?.resets_at) {
             this._fiveHourResetLabel.set_text(
@@ -350,14 +363,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         }
     }
 
-    _updatePanelProgressBar(usage) {
-        const maxWidth = 50;
-        const width = Math.round((Math.min(100, Math.max(0, usage)) / 100) * maxWidth);
-        this._panelProgressBar.set_width(width);
-    }
-
-    _updateProgressBar(progressBar, usage) {
-        const maxWidth = 200;
+    _updateProgressBar(progressBar, usage, maxWidth = 200) {
         const width = Math.round((Math.min(100, Math.max(0, usage)) / 100) * maxWidth);
         progressBar.set_width(width);
 
@@ -375,6 +381,63 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         } else {
             progressBar.add_style_class_name('usage-low');
         }
+    }
+
+    _maybeNotifyDiscord(fiveHour, sevenDay) {
+        const webhookUrl = this._settings.get_string('discord-webhook-url').trim();
+        if (!webhookUrl) {
+            return;
+        }
+
+        const threshold = this._settings.get_int('discord-threshold');
+        this._fiveHourNotified = this._notifyIfAboveThreshold(
+            webhookUrl, threshold, fiveHour, this._fiveHourNotified, '5-hour');
+        this._sevenDayNotified = this._notifyIfAboveThreshold(
+            webhookUrl, threshold, sevenDay, this._sevenDayNotified, '7-day');
+    }
+
+    _notifyIfAboveThreshold(webhookUrl, threshold, usage, alreadyNotified, windowName) {
+        if (usage < threshold) {
+            return false;
+        }
+        if (alreadyNotified) {
+            return true;
+        }
+
+        this._sendDiscordMessage(
+            webhookUrl,
+            `⚠️ Claude Code ${windowName} usage is at ${usage.toFixed(1)}% (threshold: ${threshold}%)`
+        );
+        return true;
+    }
+
+    _sendDiscordMessage(webhookUrl, content) {
+        const message = Soup.Message.new('POST', webhookUrl);
+        if (!message) {
+            console.error('Claude Usage: Invalid Discord webhook URL');
+            return;
+        }
+
+        const body = new TextEncoder().encode(JSON.stringify({content}));
+        message.set_request_body_from_bytes('application/json', new GLib.Bytes(body));
+
+        this._session.send_and_read_async(
+            message,
+            GLib.PRIORITY_DEFAULT,
+            this._cancellable,
+            (session, result) => {
+                try {
+                    session.send_and_read_finish(result);
+                    if (message.status_code < 200 || message.status_code >= 300) {
+                        console.error(`Claude Usage: Discord webhook returned HTTP ${message.status_code}`);
+                    }
+                } catch (e) {
+                    if (!this._cancellable.is_cancelled()) {
+                        console.error('Claude Usage: Failed to send Discord notification:', e.message);
+                    }
+                }
+            }
+        );
     }
 
     _formatResetTime(isoString) {
@@ -405,6 +468,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
     destroy() {
         this._stopTimer();
+        this._cancellable.cancel();
         if (this._session) {
             this._session.abort();
             this._session = null;

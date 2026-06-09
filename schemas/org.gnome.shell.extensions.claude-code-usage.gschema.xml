@@ -26,5 +26,16 @@
       <summary>Proxy URL</summary>
       <description>HTTP proxy URL (e.g., http://localhost:11809). Leave empty to use no proxy.</description>
     </key>
+    <key name="discord-webhook-url" type="s">
+      <default>''</default>
+      <summary>Discord webhook URL</summary>
+      <description>Discord webhook URL to notify when usage crosses the threshold. Leave empty to disable notifications.</description>
+    </key>
+    <key name="discord-threshold" type="i">
+      <range min="1" max="100"/>
+      <default>90</default>
+      <summary>Discord notification threshold</summary>
+      <description>Usage percentage at which a Discord notification is sent</description>
+    </key>
   </schema>
 </schemalist>

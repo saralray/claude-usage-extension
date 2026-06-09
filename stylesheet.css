@@ -58,19 +58,23 @@
     transition: width 300ms ease-out;
 }
 
-.claude-progress-bar.usage-low {
+.claude-progress-bar.usage-low,
+.claude-panel-progress-bar.usage-low {
     background-color: #22c55e;
 }
 
-.claude-progress-bar.usage-medium {
+.claude-progress-bar.usage-medium,
+.claude-panel-progress-bar.usage-medium {
     background-color: #eab308;
 }
 
-.claude-progress-bar.usage-high {
+.claude-progress-bar.usage-high,
+.claude-panel-progress-bar.usage-high {
     background-color: #f97316;
 }
 
-.claude-progress-bar.usage-critical {
+.claude-progress-bar.usage-critical,
+.claude-panel-progress-bar.usage-critical {
     background-color: #ef4444;
 }
 

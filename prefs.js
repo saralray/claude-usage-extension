@@ -124,5 +124,49 @@ export default class ClaudeUsagePreferences extends ExtensionPreferences {
             margin_top: 4,
         });
         networkGroup.add(proxyHint);
+
+        const discordGroup = new Adw.PreferencesGroup({
+            title: 'Discord Notifications',
+            description: 'Send a Discord message when usage crosses a threshold',
+        });
+        page.add(discordGroup);
+
+        const webhookRow = new Adw.EntryRow({
+            title: 'Webhook URL',
+            show_apply_button: true,
+        });
+        webhookRow.set_text(settings.get_string('discord-webhook-url'));
+        webhookRow.connect('apply', () => {
+            settings.set_string('discord-webhook-url', webhookRow.get_text());
+        });
+        discordGroup.add(webhookRow);
+
+        const thresholdRow = new Adw.SpinRow({
+            title: 'Notification Threshold',
+            subtitle: 'Notify when 5-hour or 7-day usage reaches this percentage',
+            adjustment: new Gtk.Adjustment({
+                lower: 1,
+                upper: 100,
+                step_increment: 5,
+                page_increment: 10,
+                value: settings.get_int('discord-threshold'),
+            }),
+        });
+        settings.bind(
+            'discord-threshold',
+            thresholdRow,
+            'value',
+            Gio.SettingsBindFlags.DEFAULT
+        );
+        discordGroup.add(thresholdRow);
+
+        const webhookHint = new Gtk.Label({
+            label: 'Create a webhook in your Discord server settings (leave empty to disable)',
+            xalign: 0,
+            css_classes: ['dim-label', 'caption'],
+            margin_start: 12,
+            margin_top: 4,
+        });
+        discordGroup.add(webhookHint);
     }
 }
