@@ -3,9 +3,9 @@
 cd ..
 
 if [ -d claude-usage-extension ]; then
-	rm -rf ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com
-	cp -r claude-usage-extension ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com 
-	cd ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com/schemas
+	rm -rf ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray
+	cp -r claude-usage-extension ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray 
+	cd ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray/schemas
 	glib-compile-schemas .
 	gnome-session-quit --no-prompt
 else

@@ -19,8 +19,8 @@ Install/update the extension locally (copies repo to the extensions dir, compile
 Manual equivalent without logging out:
 
 ```bash
-cp -r . ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com
-glib-compile-schemas ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com/schemas
+cp -r . ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray/schemas
 ```
 
 After editing schema XML, `glib-compile-schemas schemas/` must be re-run. GNOME Shell must be restarted to pick up extension.js changes (Alt+F2 → `r` on X11, or log out on Wayland). View runtime logs with `journalctl -f -o cat /usr/bin/gnome-shell`.

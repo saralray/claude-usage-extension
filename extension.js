@@ -13,6 +13,14 @@ import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/ex
 
 const API_URL = 'https://api.anthropic.com/api/oauth/usage';
 
+// Set to true to surface diagnostics in `journalctl -f -o cat /usr/bin/gnome-shell`.
+const DEBUG = false;
+
+function logError(...args) {
+    if (DEBUG)
+        console.error('Claude Usage:', ...args);
+}
+
 const ClaudeUsageIndicator = GObject.registerClass(
 class ClaudeUsageIndicator extends PanelMenu.Button {
     _init(extensionPath, settings, openPreferences) {
@@ -27,6 +35,9 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._sevenDayNotified = false;
         this._hasData = false;
         this._retryTimerId = null;
+        this._lastToken = null;
+        this._tokenRefreshed = false;
+        this._fetchFailures = 0;
 
         this._box = new St.BoxLayout({
             style_class: 'panel-status-menu-box',
@@ -291,9 +302,14 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                     return;
                 }
 
+                if (this._lastToken !== null && token !== this._lastToken) {
+                    this._tokenRefreshed = true;
+                }
+                this._lastToken = token;
+
                 this._fetchUsage(token);
             } catch (e) {
-                console.error('Claude Usage: Failed to read credentials:', e.message);
+                logError('Failed to read credentials:', e.message);
                 this._onCredentialsError();
             }
         });
@@ -315,7 +331,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                     const bytes = session.send_and_read_finish(result);
 
                     if (message.status_code !== 200) {
-                        console.error(`Claude Usage: API returned HTTP ${message.status_code}`);
+                        logError(`API returned HTTP ${message.status_code}`);
                         this._onFetchError(`HTTP ${message.status_code}`);
                         return;
                     }
@@ -325,7 +341,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
                     this._updateDisplay(data);
                 } catch (e) {
-                    console.error('Claude Usage: Failed to fetch usage:', e.message);
+                    logError('Failed to fetch usage:', e.message);
                     this._onFetchError('Error');
                 }
             }
@@ -347,6 +363,13 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._scheduleRetry();
 
         if (this._hasData)
+            return;
+
+        // Tolerate transient first-request hiccups (e.g. a single in-shell
+        // socket timeout right after enable): keep the loading state and only
+        // surface an error once a few consecutive attempts have failed.
+        this._fetchFailures += 1;
+        if (this._fetchFailures < 3)
             return;
 
         this._label.set_text('Error');
@@ -376,6 +399,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
     _updateDisplay(data) {
         this._hasData = true;
+        this._fetchFailures = 0;
         this._clearRetry();
 
         const fiveHour = data.five_hour?.utilization ?? 0;
@@ -391,11 +415,22 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._sevenDayPercent.set_text(`${sevenDay.toFixed(1)}%`);
         this._updateProgressBar(this._sevenDayProgressBar, sevenDay);
 
-        this._maybeNotifyDiscord(fiveHour, sevenDay);
+        this._maybeNotifyDiscord(fiveHour, sevenDay, data);
 
         if (data.five_hour?.resets_at) {
             this._fiveHourResetLabel.set_text(
                 `Resets in ${this._formatResetTime(data.five_hour.resets_at)}`
+            );
+        }
+
+        if (this._tokenRefreshed) {
+            this._tokenRefreshed = false;
+            const resetIn = data.five_hour?.resets_at
+                ? this._formatResetTime(data.five_hour.resets_at)
+                : 'unknown';
+            Main.notify(
+                'Claude Usage',
+                `Claude Code token usage is at ${fiveHour.toFixed(1)}%, refresh in ${resetIn}`
             );
         }
 
@@ -426,20 +461,26 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         }
     }
 
-    _maybeNotifyDiscord(fiveHour, sevenDay) {
+    _maybeNotifyDiscord(fiveHour, sevenDay, data) {
         const webhookUrl = this._settings.get_string('discord-webhook-url').trim();
         if (!webhookUrl) {
             return;
         }
 
         const threshold = this._settings.get_int('discord-threshold');
+        const fiveHourReset = data.five_hour?.resets_at
+            ? this._formatResetTime(data.five_hour.resets_at)
+            : 'unknown';
+        const sevenDayReset = data.seven_day?.resets_at
+            ? this._formatResetTime(data.seven_day.resets_at)
+            : 'unknown';
         this._fiveHourNotified = this._notifyIfAboveThreshold(
-            webhookUrl, threshold, fiveHour, this._fiveHourNotified, '5-hour');
+            webhookUrl, threshold, fiveHour, this._fiveHourNotified, fiveHourReset);
         this._sevenDayNotified = this._notifyIfAboveThreshold(
-            webhookUrl, threshold, sevenDay, this._sevenDayNotified, '7-day');
+            webhookUrl, threshold, sevenDay, this._sevenDayNotified, sevenDayReset);
     }
 
-    _notifyIfAboveThreshold(webhookUrl, threshold, usage, alreadyNotified, windowName) {
+    _notifyIfAboveThreshold(webhookUrl, threshold, usage, alreadyNotified, resetIn) {
         if (usage < threshold) {
             return false;
         }
@@ -449,7 +490,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
         this._sendDiscordMessage(
             webhookUrl,
-            `⚠️ Claude Code ${windowName} usage is at ${usage.toFixed(1)}% (threshold: ${threshold}%)`
+            `Claude Code usage is at ${usage.toFixed(1)}%, token refresh at ${resetIn}`
         );
         return true;
     }
@@ -457,7 +498,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     _sendDiscordMessage(webhookUrl, content) {
         const message = Soup.Message.new('POST', webhookUrl);
         if (!message) {
-            console.error('Claude Usage: Invalid Discord webhook URL');
+            logError('Invalid Discord webhook URL');
             return;
         }
 
@@ -472,11 +513,11 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 try {
                     session.send_and_read_finish(result);
                     if (message.status_code < 200 || message.status_code >= 300) {
-                        console.error(`Claude Usage: Discord webhook returned HTTP ${message.status_code}`);
+                        logError(`Discord webhook returned HTTP ${message.status_code}`);
                     }
                 } catch (e) {
                     if (!this._cancellable.is_cancelled()) {
-                        console.error('Claude Usage: Failed to send Discord notification:', e.message);
+                        logError('Failed to send Discord notification:', e.message);
                     }
                 }
             }

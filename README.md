@@ -9,6 +9,7 @@ A GNOME Shell extension that displays your Claude Code API usage percentage in t
 - **Real-time usage monitoring** — view your 5-hour and 7-day Claude Code usage with color-coded progress bars
 - **Configurable panel display** — show usage as a text percentage, a progress bar, or both, with a color or monochrome icon
 - **Discord notifications** — send a message to a Discord webhook when usage crosses a configurable threshold
+- **Token refresh alerts** — a desktop notification with the current usage and reset time when Claude Code refreshes its OAuth token
 - **Proxy support** — route API requests through an HTTP proxy
 
 ## Requirements
@@ -25,9 +26,9 @@ The extension is distributed on *extensions.gnome.org*: [Claude Code Usage](http
 ### Manual
 
 ```bash
-git clone https://github.com/Haletran/claude-usage-extension
-cp -r claude-usage-extension ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com
-cd ~/.local/share/gnome-shell/extensions/claude-code-usage@haletran.com/schemas
+git clone https://github.com/saralray/claude-usage-extension
+cp -r claude-usage-extension ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray
+cd ~/.local/share/gnome-shell/extensions/claude-code-usage@saralray/schemas
 glib-compile-schemas .
 ## Restart GNOME Shell: Alt + F2, type r (X11) or log out and back in (Wayland)
 ## Then enable the extension
